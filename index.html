@@ -20,7 +20,7 @@
           <h1 id="summary-title"><span id="monthly-total">0 ₽</span><small>/ месяц</small></h1>
           <p id="yearly-total" class="year-total">0 ₽ в год</p>
         </div>
-        <button id="rate-button" class="rate-pill" type="button" aria-label="Изменить курс доллара">$1 · <span id="rate-value">90 ₽</span></button>
+        <button id="rate-button" class="rate-pill" type="button" aria-label="Изменить курсы валют">Курсы · <span id="rate-value">$ 90 ₽</span></button>
       </header>
       <div id="bubble-world" class="bubble-world" aria-label="Интерактивные пузырьки подписок"></div>
       <p class="gesture-hint">Тяни и бросай пузырьки</p>
@@ -48,7 +48,7 @@
       <label>Название<input id="name" required maxlength="40" placeholder="Например, Netflix"></label>
       <div class="form-row">
         <label>Сумма<input id="amount" required type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="499"></label>
-        <label>Валюта<select id="currency"><option value="RUB">RUB ₽</option><option value="USD">USD $</option></select></label>
+        <label>Валюта<select id="currency"><option value="RUB">RUB ₽</option><option value="USD">USD $</option><option value="TRY">TRY ₺</option><option value="SGD">SGD S$</option></select></label>
       </div>
       <label>Период<select id="period"><option value="month">Ежемесячно</option><option value="year">Ежегодно</option></select></label>
       <label>Следующий платёж <span class="optional">необязательно</span><input id="next-payment" type="date"></label>
@@ -62,9 +62,11 @@
     <form id="rate-form" method="dialog">
       <div class="sheet-handle"></div>
       <div class="sheet-title"><h3>Курс валют</h3><button class="icon-button" value="cancel" type="button" data-close>×</button></div>
-      <p class="sheet-copy">Используется только для общего итога и размера пузырьков.</p>
+      <p class="sheet-copy">Ручные курсы используются для общего итога, сравнения и физики пузырьков.</p>
       <label>1 USD в рублях<input id="usd-rate" required type="number" min="0.01" step="0.01" inputmode="decimal"></label>
-      <button class="primary-button" type="submit">Сохранить курс</button>
+      <label>1 TRY в рублях<input id="try-rate" required type="number" min="0.01" step="0.01" inputmode="decimal"></label>
+      <label>1 SGD в рублях<input id="sgd-rate" required type="number" min="0.01" step="0.01" inputmode="decimal"></label>
+      <button class="primary-button" type="submit">Сохранить курсы</button>
     </form>
   </dialog>
   <script src="./app.js" defer></script>
