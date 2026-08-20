@@ -16,11 +16,43 @@ function originalMonthly(s){return s.amount/(s.period==='year'?12:1)}
 function totals(){const month=state.subscriptions.reduce((n,s)=>n+monthlyRub(s),0);$('#monthly-total').textContent=money(month);$('#yearly-total').textContent=`${money(month*12)} в год`;$('#rate-value').textContent=`$ ${state.rates.USD} ₽`}
 function renderList(){const el=$('#subscription-list');if(!state.subscriptions.length){el.innerHTML='<div class="empty">Пока пусто.<br>Добавьте первую подписку.</div>';return}el.innerHTML=state.subscriptions.map((s,i)=>`<article class="list-item" data-id="${s.id}"><div class="category-dot" style="background:${COLORS[i%COLORS.length]}">${s.name.trim()[0]?.toUpperCase()||'•'}</div><div><div class="item-name">${escapeHtml(s.name)}</div><div class="item-meta">${escapeHtml(s.category||'Без категории')}${s.nextPayment?` · ${new Date(s.nextPayment+'T00:00').toLocaleDateString('ru-RU')}`:''}</div></div><div class="item-price">${money(s.amount,s.currency,s.currency==='RUB'?0:2)}<small>в ${s.period==='year'?'год':'месяц'}</small></div></article>`).join('');el.querySelectorAll('.list-item').forEach(x=>x.onclick=()=>openEditor(x.dataset.id))}
 function escapeHtml(v){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
-function renderBubbles(){bodies=[];world.innerHTML='';const values=state.subscriptions.map(monthlyRub),min=Math.min(...values,0),max=Math.max(...values,1),rect=world.getBoundingClientRect();state.subscriptions.forEach((s,i)=>{const norm=max===min?0.5:Math.sqrt((values[i]-min)/(max-min));const r=44+norm*35;const el=document.createElement('div');el.className='bubble';el.dataset.id=s.id;el.style.cssText=`width:${r*2}px;height:${r*2}px;--bubble:${COLORS[i%COLORS.length]}`;el.innerHTML=`<span class="bubble-name">${escapeHtml(s.name)}</span><strong class="bubble-price">${money(originalMonthly(s),s.currency,s.currency==='RUB'?0:2)}</strong><span class="bubble-period">в месяц</span>`;world.appendChild(el);bodies.push({id:s.id,el,r,mass:1+norm*5,x:r+Math.random()*Math.max(1,rect.width-r*2),y:145+r+Math.random()*Math.max(1,rect.height-170-r*2),vx:(Math.random()-.5)*45,vy:(Math.random()-.5)*45})});bindDrag()}
+function bubbleLayout(values,rect){
+  const count=values.length;
+  if(!count)return {radii:[],top:125};
+  const top=Math.min(125,Math.max(72,rect.height*.22));
+  const usableW=Math.max(1,rect.width-12),usableH=Math.max(1,rect.height-top-8);
+  const min=Math.min(...values),max=Math.max(...values);
+  const norms=values.map(v=>max===min?0.5:Math.sqrt(Math.max(0,(v-min)/(max-min))));
+  const baseRadii=norms.map(norm=>42+norm*34);
+  const baseArea=baseRadii.reduce((sum,r)=>sum+Math.PI*r*r,0);
+  const availableArea=usableW*usableH;
+  const targetFill=count<=6?.5:count<=12?.44:count<=24?.38:.34;
+  const scale=Math.min(1,Math.sqrt((availableArea*targetFill)/Math.max(1,baseArea)));
+  return {top,norms,radii:baseRadii.map(r=>Math.max(7,r*scale))};
+}
+function renderBubbles(){
+  bodies=[];world.innerHTML='';
+  const values=state.subscriptions.map(monthlyRub),rect=world.getBoundingClientRect();
+  const {top,norms=[],radii=[]}=bubbleLayout(values,rect),usableH=Math.max(1,rect.height-top);
+  state.subscriptions.forEach((s,i)=>{
+    const norm=norms[i]??.5,r=radii[i]??42,el=document.createElement('div');
+    el.className=`bubble${r<28?' bubble-compact':''}${r<19?' bubble-micro':''}`;
+    el.dataset.id=s.id;
+    el.style.cssText=`width:${r*2}px;height:${r*2}px;--bubble:${COLORS[i%COLORS.length]};--bubble-r:${r}px`;
+    el.innerHTML=`<span class="bubble-name">${escapeHtml(s.name)}</span><strong class="bubble-price">${money(originalMonthly(s),s.currency,s.currency==='RUB'?0:2)}</strong><span class="bubble-period">в месяц</span>`;
+    world.appendChild(el);
+    const angle=i*2.399963229728653+(i%3)*.17,spread=Math.sqrt((i+.7)/Math.max(1,state.subscriptions.length));
+    const maxRX=Math.max(0,rect.width*.46-r),maxRY=Math.max(0,usableH*.44-r);
+    const x=rect.width/2+Math.cos(angle)*maxRX*spread;
+    const y=top+usableH/2+Math.sin(angle)*maxRY*spread;
+    bodies.push({id:s.id,el,r,mass:1+norm*5,x:Math.max(r,Math.min(rect.width-r,x)),y:Math.max(top+r,Math.min(rect.height-r,y)),vx:(Math.random()-.5)*38,vy:(Math.random()-.5)*38});
+  });
+  bindDrag();
+}
 function bindDrag(){bodies.forEach(b=>b.el.addEventListener('pointerdown',e=>{e.preventDefault();b.el.setPointerCapture(e.pointerId);drag={b,id:e.pointerId,lastX:e.clientX,lastY:e.clientY,lastT:performance.now(),vx:0,vy:0};b.vx=b.vy=0}))}
 world.addEventListener('pointermove',e=>{if(!drag||drag.id!==e.pointerId)return;const rect=world.getBoundingClientRect(),t=performance.now(),dt=Math.max(8,t-drag.lastT)/1000,nx=e.clientX-rect.left,ny=e.clientY-rect.top;drag.vx=(nx-drag.lastX+rect.left)/dt;drag.vy=(ny-drag.lastY+rect.top)/dt;drag.b.x=Math.max(drag.b.r,Math.min(rect.width-drag.b.r,nx));drag.b.y=Math.max(drag.b.r,Math.min(rect.height-drag.b.r,ny));drag.lastX=e.clientX;drag.lastY=e.clientY;drag.lastT=t});
 function release(e){if(!drag||drag.id!==e.pointerId)return;drag.b.vx=Math.max(-1100,Math.min(1100,drag.vx));drag.b.vy=Math.max(-1100,Math.min(1100,drag.vy));drag=null}world.addEventListener('pointerup',release);world.addEventListener('pointercancel',release);
-function physics(t){const dt=Math.min(.025,(t-lastTime)/1000);lastTime=t;const rect=world.getBoundingClientRect();for(const b of bodies){if(drag?.b!==b){b.x+=b.vx*dt;b.y+=b.vy*dt;b.vx*=Math.pow(.985,dt*60);b.vy*=Math.pow(.985,dt*60);if(Math.abs(b.vx)<7)b.vx+=(Math.random()-.5)*8;if(Math.abs(b.vy)<7)b.vy+=(Math.random()-.5)*8}if(b.x-b.r<0){b.x=b.r;b.vx=Math.abs(b.vx)*.82}if(b.x+b.r>rect.width){b.x=rect.width-b.r;b.vx=-Math.abs(b.vx)*.82}if(b.y-b.r<125){b.y=125+b.r;b.vy=Math.abs(b.vy)*.82}if(b.y+b.r>rect.height){b.y=rect.height-b.r;b.vy=-Math.abs(b.vy)*.82}}
+function physics(t){const dt=Math.min(.025,(t-lastTime)/1000);lastTime=t;const rect=world.getBoundingClientRect(),top=Math.min(125,Math.max(72,rect.height*.22));for(const b of bodies){if(drag?.b!==b){b.x+=b.vx*dt;b.y+=b.vy*dt;b.vx*=Math.pow(.985,dt*60);b.vy*=Math.pow(.985,dt*60);if(Math.abs(b.vx)<7)b.vx+=(Math.random()-.5)*8;if(Math.abs(b.vy)<7)b.vy+=(Math.random()-.5)*8}if(b.x-b.r<0){b.x=b.r;b.vx=Math.abs(b.vx)*.82}if(b.x+b.r>rect.width){b.x=rect.width-b.r;b.vx=-Math.abs(b.vx)*.82}if(b.y-b.r<top){b.y=top+b.r;b.vy=Math.abs(b.vy)*.82}if(b.y+b.r>rect.height){b.y=rect.height-b.r;b.vy=-Math.abs(b.vy)*.82}}
   for(let i=0;i<bodies.length;i++)for(let j=i+1;j<bodies.length;j++){const a=bodies[i],b=bodies[j],dx=b.x-a.x,dy=b.y-a.y,minD=a.r+b.r,d=Math.hypot(dx,dy)||.01;if(d>=minD)continue;const nx=dx/d,ny=dy/d,over=minD-d,total=a.mass+b.mass;if(drag?.b!==a){a.x-=nx*over*(b.mass/total);a.y-=ny*over*(b.mass/total)}if(drag?.b!==b){b.x+=nx*over*(a.mass/total);b.y+=ny*over*(a.mass/total)}const rvx=b.vx-a.vx,rvy=b.vy-a.vy,along=rvx*nx+rvy*ny;if(along<0){const impulse=-(1.7)*along/(1/a.mass+1/b.mass);if(drag?.b!==a){a.vx-=impulse*nx/a.mass;a.vy-=impulse*ny/a.mass}if(drag?.b!==b){b.vx+=impulse*nx/b.mass;b.vy+=impulse*ny/b.mass}}}
   bodies.forEach(b=>b.el.style.transform=`translate3d(${b.x-b.r}px,${b.y-b.r}px,0)`);raf=requestAnimationFrame(physics)}
 function refresh(){totals();renderList();renderBubbles()}
