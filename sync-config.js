@@ -46,14 +46,10 @@ function mountSyncSettings(){
   const setStatus=msg=>{status.textContent=msg};
   btn.addEventListener('click',()=>{input.value=localStorage.getItem(SUBBUBBLE_SYNC_TOKEN_KEY)||'';setStatus(input.value?'Ключ сохранён на этом устройстве.':'Синхронизация ещё не подключена.');dialog.showModal()});
   dialog.querySelector('[data-sync-close]').addEventListener('click',()=>dialog.close());
-  dialog.querySelector('#sync-form').addEventListener('submit',async e=>{
+  dialog.querySelector('#sync-form').addEventListener('submit',e=>{
     e.preventDefault();const token=input.value.trim();if(!token){setStatus('Введите Sync Key.');return}
-    neutralizeUntouchedDefaults();localStorage.setItem(SUBBUBBLE_SYNC_TOKEN_KEY,token);setStatus('Подключаюсь…');
-    try{
-      if(typeof window.syncNow==='function')await window.syncNow();
-      setStatus('Готово. Синхронизация включена.');
-      setTimeout(()=>dialog.close(),650);
-    }catch(err){console.warn(err);setStatus('Ключ сохранён. Синхронизация повторится при следующем открытии.')}
+    neutralizeUntouchedDefaults();localStorage.setItem(SUBBUBBLE_SYNC_TOKEN_KEY,token);setStatus('Ключ сохранён. Перезапускаю синхронизацию…');
+    setTimeout(()=>location.reload(),350);
   });
 }
 
