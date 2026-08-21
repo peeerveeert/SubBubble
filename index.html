@@ -20,7 +20,7 @@
           <h1 id="summary-title"><span id="monthly-total">0 ₽</span><small>/ месяц</small></h1>
           <p id="yearly-total" class="year-total">0 ₽ в год</p>
         </div>
-        <button id="rate-button" class="rate-pill" type="button" aria-label="Изменить курсы валют">Курсы · <span id="rate-value">$ 90 ₽</span></button>
+        <button id="rate-button" class="rate-pill" type="button" aria-label="Изменить курсы валют">Курсы · <span id="rate-value">$ 90 ₽</span><small id="rate-meta">авто</small></button>
       </header>
       <div id="bubble-world" class="bubble-world" aria-label="Интерактивные пузырьки подписок"></div>
       <p class="gesture-hint">Тяни и бросай пузырьки</p>
@@ -29,7 +29,10 @@
     <section id="list-screen" class="screen" aria-labelledby="list-title">
       <header class="list-header">
         <div><p class="eyebrow">ВАШИ РАСХОДЫ</p><h2 id="list-title">Подписки</h2></div>
-        <button id="add-button" class="add-button" type="button" aria-label="Добавить подписку">+</button>
+        <div class="list-actions">
+          <button id="sync-indicator" class="sync-pill" type="button" aria-label="Синхронизировать сейчас" onclick="syncNow()"><span id="sync-label" class="sync-status">Ожидает синхронизации</span><small id="sync-last-time">ещё не было</small></button>
+          <button id="add-button" class="add-button" type="button" aria-label="Добавить подписку">+</button>
+        </div>
       </header>
       <div id="subscription-list" class="subscription-list"></div>
     </section>
@@ -62,10 +65,13 @@
     <form id="rate-form" method="dialog">
       <div class="sheet-handle"></div>
       <div class="sheet-title"><h3>Курс валют</h3><button class="icon-button" value="cancel" type="button" data-close>×</button></div>
-      <p class="sheet-copy">Ручные курсы используются для общего итога, сравнения и физики пузырьков.</p>
+      <p class="sheet-copy">Авто-курсы обновляются из интернета и остаются сохранёнными офлайн. Ручные курсы можно включить как override.</p>
+      <label class="toggle-row"><span>Автоматические курсы</span><input id="rates-mode" type="checkbox" checked></label>
+      <p id="rates-updated" class="sheet-copy small-copy">Авто ещё не обновлялось</p>
       <label>1 USD в рублях<input id="usd-rate" required type="number" min="0.01" step="0.01" inputmode="decimal"></label>
       <label>1 TRY в рублях<input id="try-rate" required type="number" min="0.01" step="0.01" inputmode="decimal"></label>
       <label>1 SGD в рублях<input id="sgd-rate" required type="number" min="0.01" step="0.01" inputmode="decimal"></label>
+      <button id="refresh-rates-button" class="secondary-button" type="button">Обновить сейчас</button>
       <button class="primary-button" type="submit">Сохранить курсы</button>
     </form>
   </dialog>
