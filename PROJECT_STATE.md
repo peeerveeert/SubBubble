@@ -14,7 +14,7 @@ Protected recovery point mentioned by the product owner: `backup/raw-prototype-2
 
 - Production design, Bubble World, physics, UX, and app structure are not changed in the current analytics batch.
 - Existing local-first sync server behavior is preserved.
-- Server-side Space Key hashing is used for privacy-safe isolated space identifiers; raw Space Keys are not stored in analytics.
+- Server-side Space Key hashing follows the production isolation scheme exactly: non-owner spaces use full `sha256(raw_space_token).hexdigest()` filenames and analytics IDs.
 - Anonymous analytics records only aggregate counters and metadata: created/last seen timestamps, visit count, expense presence/count, platform, PWA flag, and daily counters.
 - Events supported: `space_created`, `app_open`, `expense_added`, `expense_deleted`.
 - Protected `GET /stats` requires separate `ADMIN_TOKEN`.

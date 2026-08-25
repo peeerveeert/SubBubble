@@ -29,8 +29,8 @@
 
 - `DATA_DIR` — директория isolated space state-файлов, по умолчанию `/opt/subbubble/data/spaces`.
 - `ANALYTICS_FILE` — anonymous analytics, по умолчанию `/opt/subbubble/data/analytics.json`.
-- `SYNC_TOKEN` — legacy/server salt; Space Key приходит как Bearer token и хранится только как server-side hash.
-- `SPACE_HASH_SALT` — отдельная соль для hash space keys, если нужно отделить её от `SYNC_TOKEN`.
+- `SYNC_TOKEN` — legacy owner key. Для owner используется `/opt/subbubble/data/subbubble.json`.
+- Space Key приходит как Bearer token. Для non-owner spaces state-файл остаётся `/opt/subbubble/data/spaces/<sha256(raw_space_token).hexdigest()>.json`.
 - `ADMIN_TOKEN` — отдельный обязательный токен для `GET /stats`.
 
 `/stats` возвращает только агрегаты и требует `Authorization: Bearer $ADMIN_TOKEN`. Analytics не хранит названия подписок, суммы, валюты или исходные Space Keys.

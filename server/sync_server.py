@@ -16,7 +16,6 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", str(DATA_FILE.parent / "spaces")))
 ANALYTICS_FILE = Path(os.environ.get("ANALYTICS_FILE", "/opt/subbubble/data/analytics.json"))
 SYNC_TOKEN = os.environ.get("SYNC_TOKEN", "")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
-SPACE_HASH_SALT = os.environ.get("SPACE_HASH_SALT", SYNC_TOKEN or "subbubble")
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
 MAX_BODY = 1_000_000
 lock = threading.Lock()
@@ -121,39 +120,38 @@ def atomic_write_json(path, body):
             os.unlink(tmp_name)
 
 
-def bearer_token(headers):
+def _space_token(headers):
     value = headers.get("Authorization", "")
     if value.startswith("Bearer "):
         return value[7:].strip()
     return ""
 
 
-def space_hash_from_token(token):
-    if token:
-        source = f"{SPACE_HASH_SALT}:{token}".encode("utf-8")
-    else:
-        source = f"{SPACE_HASH_SALT}:anonymous-default".encode("utf-8")
-    return hashlib.sha256(source).hexdigest()[:32]
+def space_hash_for_token(token):
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
 
 
-def state_file_for(space_hash):
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    target = DATA_DIR / f"{space_hash}.json"
-    if not target.exists() and DATA_FILE.exists() and space_hash == space_hash_from_token(SYNC_TOKEN):
+def data_file_for_token(token):
+    if SYNC_TOKEN and token == SYNC_TOKEN:
         return DATA_FILE
-    return target
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    return DATA_DIR / f"{space_hash_for_token(token)}.json"
 
 
-def read_space_state(space_hash):
-    path = state_file_for(space_hash)
+def analytics_id_for_token(token):
+    return space_hash_for_token(token)
+
+
+def read_space_state(token):
+    path = data_file_for_token(token)
     try:
         return normalize(json.loads(path.read_text(encoding="utf-8")))
     except Exception:
         return normalize(None)
 
 
-def write_space_state(space_hash, state):
-    atomic_write_json(DATA_DIR / f"{space_hash}.json", normalize(state))
+def write_space_state(token, state):
+    atomic_write_json(data_file_for_token(token), normalize(state))
 
 
 def now_iso():
@@ -254,7 +252,7 @@ def bootstrap_existing_spaces():
         for path in [DATA_FILE, *DATA_DIR.glob("*.json")]:
             if not path.exists():
                 continue
-            key = path.stem if path.parent == DATA_DIR else space_hash_from_token(SYNC_TOKEN)
+            key = path.stem if path.parent == DATA_DIR else analytics_id_for_token(SYNC_TOKEN)
             if key in spaces:
                 continue
             state = normalize(json.loads(path.read_text(encoding="utf-8")))
@@ -336,7 +334,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def _authorized(self):
-        return bool(bearer_token(self.headers)) or not SYNC_TOKEN
+        return bool(_space_token(self.headers)) or not SYNC_TOKEN
 
     def _admin_authorized(self):
         return bool(ADMIN_TOKEN) and self.headers.get("Authorization") == f"Bearer {ADMIN_TOKEN}"
@@ -372,22 +370,23 @@ class Handler(BaseHTTPRequestHandler):
             incoming = json.loads(self.rfile.read(length).decode("utf-8"))
         except Exception:
             return self._json(400, {"error": "bad_json"})
-        token = bearer_token(self.headers)
-        space_hash = space_hash_from_token(token)
+        token = _space_token(self.headers)
+        analytics_id = analytics_id_for_token(token)
         if path == "/analytics":
             event = str(incoming.get("event") or "")
             with lock:
-                state = read_space_state(space_hash)
-            track_event(space_hash, event, state=state, meta=incoming.get("meta"))
+                state = read_space_state(token)
+            track_event(analytics_id, event, state=state, meta=incoming.get("meta"))
             return self._json(200, {"ok": True})
         with lock:
-            current = read_space_state(space_hash)
-            is_new_space = not state_file_for(space_hash).exists()
+            state_path = data_file_for_token(token)
+            current = read_space_state(token)
+            is_new_space = not state_path.exists()
             merged = merge(current, incoming.get("state"))
-            write_space_state(space_hash, merged)
+            write_space_state(token, merged)
         meta = incoming.get("meta") if isinstance(incoming, dict) else None
         if is_new_space:
-            track_event(space_hash, "space_created", state=merged, meta=meta)
+            track_event(analytics_id, "space_created", state=merged, meta=meta)
         return self._json(200, {"state": merged})
 
     def log_message(self, fmt, *args):
