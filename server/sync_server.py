@@ -215,6 +215,8 @@ def track_event(space_hash, event, state=None, meta=None):
             "events": {},
             "daily": {},
         }
+        events = space.setdefault("events", {})
+        first_space_created_event = event == "space_created" and int(events.get("space_created") or 0) == 0
         if event == "app_open":
             space["visit_count"] = int(space.get("visit_count") or 0) + 1
             space["last_seen_at"] = at
@@ -230,13 +232,12 @@ def track_event(space_hash, event, state=None, meta=None):
         if expense_count is not None:
             space["expense_count"] = max(0, int(expense_count))
             space["has_expenses"] = space["expense_count"] > 0
-        events = space.setdefault("events", {})
         events[event] = int(events.get(event) or 0) + 1
         daily = space.setdefault("daily", {})
         day_stats = daily.setdefault(day, {"opens": 0, "created": 0, "added": 0, "deleted": 0})
         if event == "app_open":
             day_stats["opens"] = int(day_stats.get("opens") or 0) + 1
-        elif event == "space_created" and created:
+        elif event == "space_created" and first_space_created_event:
             day_stats["created"] = 1
         elif event == "expense_added":
             day_stats["added"] = int(day_stats.get("added") or 0) + 1
@@ -277,7 +278,7 @@ def stats_response():
     spaces = list((data.get("spaces") or {}).values())
     today = today_key()
     total = len(spaces)
-    activated = sum(1 for s in spaces if s.get("last_seen_at") or int(s.get("visit_count") or 0) > 0)
+    activated = sum(1 for s in spaces if int((s.get("events") or {}).get("expense_added") or 0) > 0)
     active_today = sum(1 for s in spaces if today in (s.get("daily") or {}) and int((s["daily"][today] or {}).get("opens") or 0) > 0)
     returning = sum(1 for s in spaces if int(s.get("visit_count") or 0) > 1)
     platforms = {"ios": 0, "android": 0, "desktop": 0, "unknown": 0}
@@ -298,8 +299,9 @@ def stats_response():
     return {
         "total_spaces": total,
         "activated_spaces": activated,
+        "ever_activated_spaces": activated,
         "activation_rate": round(activated / total, 4) if total else 0,
-        "empty_spaces": sum(1 for s in spaces if not s.get("has_expenses")),
+        "empty_spaces": total - sum(1 for s in spaces if int(s.get("expense_count") or 0) > 0),
         "total_expenses": sum(int(s.get("expense_count") or 0) for s in spaces),
         "new_spaces_today": daily[-1]["new_spaces"],
         "active_today": active_today,
@@ -386,7 +388,6 @@ class Handler(BaseHTTPRequestHandler):
         meta = incoming.get("meta") if isinstance(incoming, dict) else None
         if is_new_space:
             track_event(space_hash, "space_created", state=merged, meta=meta)
-        track_event(space_hash, "app_open", state=merged, meta=meta)
         return self._json(200, {"state": merged})
 
     def log_message(self, fmt, *args):

@@ -55,6 +55,7 @@ async function trackAnalytics(event){
     await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${SYNC_CONFIG.token}`},body:JSON.stringify({event,meta:analyticsMeta()}),keepalive:true});
   }catch(err){console.warn('SubBubble analytics skipped:',err)}
 }
+trackAnalytics('app_open');
 async function syncNow(){
   if(!SYNC_CONFIG?.url){renderSyncStatus();return}
   if(!navigator.onLine){setSyncStatus('error','нет сети');return}
