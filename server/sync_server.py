@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+import hashlib
 import json
 import os
+import re
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -12,6 +14,7 @@ DATA_FILE = Path(os.environ.get("DATA_FILE", "/opt/subbubble/data/subbubble.json
 SYNC_TOKEN = os.environ.get("SYNC_TOKEN", "")
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
 MAX_BODY = 1_000_000
+SPACE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 lock = threading.Lock()
 
 
@@ -78,29 +81,37 @@ def merge(left_raw, right_raw):
     }
 
 
-def read_state():
+def read_state(path):
     try:
-        return normalize(json.loads(DATA_FILE.read_text(encoding="utf-8")))
+        return normalize(json.loads(path.read_text(encoding="utf-8")))
     except Exception:
         return normalize(None)
 
 
-def write_state(state):
-    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix="subbubble-", suffix=".json", dir=str(DATA_FILE.parent))
+def write_state(path, state):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix="subbubble-", suffix=".json", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(state, handle, ensure_ascii=False, indent=2)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_name, DATA_FILE)
+        os.replace(tmp_name, path)
     finally:
         if os.path.exists(tmp_name):
             os.unlink(tmp_name)
 
 
+def data_file_for_token(token):
+    # Preserve the original owner's database exactly where it already lives.
+    if SYNC_TOKEN and token == SYNC_TOKEN:
+        return DATA_FILE
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return DATA_FILE.parent / "spaces" / f"{digest}.json"
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "SubBubbleSync/1.0"
+    server_version = "SubBubbleSync/1.1"
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
@@ -118,8 +129,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def _authorized(self):
-        return not SYNC_TOKEN or self.headers.get("Authorization") == f"Bearer {SYNC_TOKEN}"
+    def _space_token(self):
+        header = self.headers.get("Authorization", "")
+        if not header.startswith("Bearer "):
+            return None
+        token = header[7:].strip()
+        if SYNC_TOKEN and token == SYNC_TOKEN:
+            return token
+        return token if SPACE_TOKEN_RE.fullmatch(token) else None
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -128,13 +145,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            return self._json(200, {"ok": True})
+            return self._json(200, {"ok": True, "spaces": True})
         return self._json(404, {"error": "not_found"})
 
     def do_POST(self):
         if self.path != "/sync":
             return self._json(404, {"error": "not_found"})
-        if not self._authorized():
+        token = self._space_token()
+        if not token:
             return self._json(401, {"error": "unauthorized"})
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -146,10 +164,11 @@ class Handler(BaseHTTPRequestHandler):
             incoming = json.loads(self.rfile.read(length).decode("utf-8"))
         except Exception:
             return self._json(400, {"error": "bad_json"})
+        path = data_file_for_token(token)
         with lock:
-            current = read_state()
+            current = read_state(path)
             merged = merge(current, incoming.get("state"))
-            write_state(merged)
+            write_state(path, merged)
         return self._json(200, {"state": merged})
 
     def log_message(self, fmt, *args):
@@ -157,5 +176,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"SubBubble sync listening on {HOST}:{PORT}; data={DATA_FILE}", flush=True)
+    print(f"SubBubble sync listening on {HOST}:{PORT}; data={DATA_FILE}; isolated_spaces=on", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
