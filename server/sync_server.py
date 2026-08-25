@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
+import hashlib
 import json
 import os
-import hashlib
+import re
 import tempfile
 import threading
 from datetime import datetime, timezone
@@ -16,9 +17,9 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", str(DATA_FILE.parent / "spaces")))
 ANALYTICS_FILE = Path(os.environ.get("ANALYTICS_FILE", "/opt/subbubble/data/analytics.json"))
 SYNC_TOKEN = os.environ.get("SYNC_TOKEN", "")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
-SPACE_HASH_SALT = os.environ.get("SPACE_HASH_SALT", SYNC_TOKEN or "subbubble")
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
 MAX_BODY = 1_000_000
+SPACE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 lock = threading.Lock()
 analytics_lock = threading.Lock()
 
@@ -60,7 +61,6 @@ def merge(left_raw, right_raw):
     right_by_id = {x["id"]: x for x in right["subscriptions"]}
     ids = set(left_by_id) | set(right_by_id) | set(left["tombstones"]) | set(right["tombstones"])
     live, tombstones = {}, {}
-
     for sub_id in ids:
         l, r = left_by_id.get(sub_id), right_by_id.get(sub_id)
         deleted_at = max(int(left["tombstones"].get(sub_id, 0)), int(right["tombstones"].get(sub_id, 0)))
@@ -74,7 +74,6 @@ def merge(left_raw, right_raw):
             live[sub_id] = dict(newest)
         elif deleted_at:
             tombstones[sub_id] = deleted_at
-
     right_rates_newer = right["ratesUpdatedAt"] > left["ratesUpdatedAt"]
     subscriptions = sorted(live.values(), key=lambda x: int(x.get("updatedAt", 0)))
     return {
@@ -84,27 +83,6 @@ def merge(left_raw, right_raw):
         "subscriptions": subscriptions,
         "tombstones": tombstones,
     }
-
-
-def read_state():
-    try:
-        return normalize(json.loads(DATA_FILE.read_text(encoding="utf-8")))
-    except Exception:
-        return normalize(None)
-
-
-def write_state(state):
-    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix="subbubble-", suffix=".json", dir=str(DATA_FILE.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(state, handle, ensure_ascii=False, indent=2)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, DATA_FILE)
-    finally:
-        if os.path.exists(tmp_name):
-            os.unlink(tmp_name)
 
 
 def atomic_write_json(path, body):
@@ -123,25 +101,24 @@ def atomic_write_json(path, body):
 
 def bearer_token(headers):
     value = headers.get("Authorization", "")
-    if value.startswith("Bearer "):
-        return value[7:].strip()
-    return ""
+    return value[7:].strip() if value.startswith("Bearer ") else ""
+
+
+def valid_space_token(token):
+    if SYNC_TOKEN and token == SYNC_TOKEN:
+        return True
+    return bool(SPACE_TOKEN_RE.fullmatch(token or ""))
 
 
 def space_hash_from_token(token):
-    if token:
-        source = f"{SPACE_HASH_SALT}:{token}".encode("utf-8")
-    else:
-        source = f"{SPACE_HASH_SALT}:anonymous-default".encode("utf-8")
-    return hashlib.sha256(source).hexdigest()[:32]
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
 
 
 def state_file_for(space_hash):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    target = DATA_DIR / f"{space_hash}.json"
-    if not target.exists() and DATA_FILE.exists() and space_hash == space_hash_from_token(SYNC_TOKEN):
+    if SYNC_TOKEN and space_hash == space_hash_from_token(SYNC_TOKEN):
         return DATA_FILE
-    return target
+    return DATA_DIR / f"{space_hash}.json"
 
 
 def read_space_state(space_hash):
@@ -153,7 +130,7 @@ def read_space_state(space_hash):
 
 
 def write_space_state(space_hash, state):
-    atomic_write_json(DATA_DIR / f"{space_hash}.json", normalize(state))
+    atomic_write_json(state_file_for(space_hash), normalize(state))
 
 
 def now_iso():
@@ -172,10 +149,7 @@ def normalize_platform(value):
 def clean_analytics_meta(raw):
     if not isinstance(raw, dict):
         raw = {}
-    return {
-        "platform": normalize_platform(raw.get("platform")),
-        "pwa": raw.get("pwa") is True,
-    }
+    return {"platform": normalize_platform(raw.get("platform")), "pwa": raw.get("pwa") is True}
 
 
 def read_analytics():
@@ -196,24 +170,17 @@ def track_event(space_hash, event, state=None, meta=None):
     if event not in {"space_created", "app_open", "expense_added", "expense_deleted"}:
         return
     meta = clean_analytics_meta(meta or {})
-    at = now_iso()
-    day = today_key()
+    at, day = now_iso(), today_key()
     expense_count = len(normalize(state).get("subscriptions", [])) if state is not None else None
     with analytics_lock:
         data = read_analytics()
         spaces = data.setdefault("spaces", {})
         existing = spaces.get(space_hash)
-        created = existing is None
         space = existing or {
-            "created_at": at,
-            "last_seen_at": at,
-            "visit_count": 0,
-            "has_expenses": False,
-            "expense_count": 0,
-            "platform": meta["platform"],
-            "pwa": meta["pwa"],
-            "events": {},
-            "daily": {},
+            "created_at": at, "last_seen_at": at, "visit_count": 0,
+            "has_expenses": False, "expense_count": 0,
+            "platform": meta["platform"], "pwa": meta["pwa"],
+            "events": {}, "daily": {},
         }
         events = space.setdefault("events", {})
         first_space_created_event = event == "space_created" and int(events.get("space_created") or 0) == 0
@@ -233,8 +200,7 @@ def track_event(space_hash, event, state=None, meta=None):
             space["expense_count"] = max(0, int(expense_count))
             space["has_expenses"] = space["expense_count"] > 0
         events[event] = int(events.get(event) or 0) + 1
-        daily = space.setdefault("daily", {})
-        day_stats = daily.setdefault(day, {"opens": 0, "created": 0, "added": 0, "deleted": 0})
+        day_stats = space.setdefault("daily", {}).setdefault(day, {"opens": 0, "created": 0, "added": 0, "deleted": 0})
         if event == "app_open":
             day_stats["opens"] = int(day_stats.get("opens") or 0) + 1
         elif event == "space_created" and first_space_created_event:
@@ -251,35 +217,34 @@ def bootstrap_existing_spaces():
     with analytics_lock:
         data = read_analytics()
         spaces = data.setdefault("spaces", {})
-        for path in [DATA_FILE, *DATA_DIR.glob("*.json")]:
-            if not path.exists():
-                continue
-            key = path.stem if path.parent == DATA_DIR else space_hash_from_token(SYNC_TOKEN)
+        paths = []
+        if DATA_FILE.exists():
+            paths.append((space_hash_from_token(SYNC_TOKEN), DATA_FILE))
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        paths.extend((path.stem, path) for path in DATA_DIR.glob("*.json"))
+        for key, path in paths:
             if key in spaces:
                 continue
-            state = normalize(json.loads(path.read_text(encoding="utf-8")))
+            try:
+                state = normalize(json.loads(path.read_text(encoding="utf-8")))
+            except Exception:
+                continue
             spaces[key] = {
-                "created_at": None,
-                "last_seen_at": None,
-                "visit_count": 0,
+                "created_at": None, "last_seen_at": None, "visit_count": 0,
                 "has_expenses": len(state["subscriptions"]) > 0,
                 "expense_count": len(state["subscriptions"]),
-                "platform": "unknown",
-                "pwa": False,
-                "events": {},
-                "daily": {},
+                "platform": "unknown", "pwa": False, "events": {}, "daily": {},
             }
         write_analytics(data)
 
 
 def stats_response():
     bootstrap_existing_spaces()
-    data = read_analytics()
-    spaces = list((data.get("spaces") or {}).values())
+    spaces = list((read_analytics().get("spaces") or {}).values())
     today = today_key()
     total = len(spaces)
     activated = sum(1 for s in spaces if int((s.get("events") or {}).get("expense_added") or 0) > 0)
-    active_today = sum(1 for s in spaces if today in (s.get("daily") or {}) and int((s["daily"][today] or {}).get("opens") or 0) > 0)
+    active_today = sum(1 for s in spaces if int((((s.get("daily") or {}).get(today) or {}).get("opens")) or 0) > 0)
     returning = sum(1 for s in spaces if int(s.get("visit_count") or 0) > 1)
     platforms = {"ios": 0, "android": 0, "desktop": 0, "unknown": 0}
     for s in spaces:
@@ -287,13 +252,13 @@ def stats_response():
     daily = []
     now_day = datetime.now(timezone.utc).date()
     for offset in range(6, -1, -1):
-        day = (now_day.fromordinal(now_day.toordinal() - offset)).isoformat()
+        day = now_day.fromordinal(now_day.toordinal() - offset).isoformat()
         daily.append({
             "date": day,
-            "new_spaces": sum(1 for s in spaces if day in (s.get("daily") or {}) and int((s["daily"][day] or {}).get("created") or 0) > 0),
-            "active_spaces": sum(1 for s in spaces if day in (s.get("daily") or {}) and int((s["daily"][day] or {}).get("opens") or 0) > 0),
-            "expense_added": sum(int(((s.get("daily") or {}).get(day) or {}).get("added") or 0) for s in spaces),
-            "expense_deleted": sum(int(((s.get("daily") or {}).get(day) or {}).get("deleted") or 0) for s in spaces),
+            "new_spaces": sum(1 for s in spaces if int((((s.get("daily") or {}).get(day) or {}).get("created")) or 0) > 0),
+            "active_spaces": sum(1 for s in spaces if int((((s.get("daily") or {}).get(day) or {}).get("opens")) or 0) > 0),
+            "expense_added": sum(int((((s.get("daily") or {}).get(day) or {}).get("added")) or 0) for s in spaces),
+            "expense_deleted": sum(int((((s.get("daily") or {}).get(day) or {}).get("deleted")) or 0) for s in spaces),
         })
     last_activity = max([s.get("last_seen_at") for s in spaces if s.get("last_seen_at")] or [None])
     return {
@@ -317,7 +282,7 @@ def stats_response():
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "SubBubbleSync/1.0"
+    server_version = "SubBubbleSync/1.2"
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
@@ -335,8 +300,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def _authorized(self):
-        return bool(bearer_token(self.headers)) or not SYNC_TOKEN
+    def _space_token(self):
+        token = bearer_token(self.headers)
+        return token if valid_space_token(token) else None
 
     def _admin_authorized(self):
         return bool(ADMIN_TOKEN) and self.headers.get("Authorization") == f"Bearer {ADMIN_TOKEN}"
@@ -349,7 +315,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/health":
-            return self._json(200, {"ok": True})
+            return self._json(200, {"ok": True, "spaces": True, "analytics": True})
         if path == "/stats":
             if not self._admin_authorized():
                 return self._json(401, {"error": "unauthorized"})
@@ -360,7 +326,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path not in {"/sync", "/analytics"}:
             return self._json(404, {"error": "not_found"})
-        if not self._authorized():
+        token = self._space_token()
+        if not token:
             return self._json(401, {"error": "unauthorized"})
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -372,7 +339,6 @@ class Handler(BaseHTTPRequestHandler):
             incoming = json.loads(self.rfile.read(length).decode("utf-8"))
         except Exception:
             return self._json(400, {"error": "bad_json"})
-        token = bearer_token(self.headers)
         space_hash = space_hash_from_token(token)
         if path == "/analytics":
             event = str(incoming.get("event") or "")
@@ -380,9 +346,10 @@ class Handler(BaseHTTPRequestHandler):
                 state = read_space_state(space_hash)
             track_event(space_hash, event, state=state, meta=incoming.get("meta"))
             return self._json(200, {"ok": True})
+        path_obj = state_file_for(space_hash)
         with lock:
+            is_new_space = not path_obj.exists()
             current = read_space_state(space_hash)
-            is_new_space = not state_file_for(space_hash).exists()
             merged = merge(current, incoming.get("state"))
             write_space_state(space_hash, merged)
         meta = incoming.get("meta") if isinstance(incoming, dict) else None
@@ -395,5 +362,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"SubBubble sync listening on {HOST}:{PORT}; data={DATA_FILE}", flush=True)
+    print(f"SubBubble sync listening on {HOST}:{PORT}; data={DATA_FILE}; isolated_spaces=on; analytics=on", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
