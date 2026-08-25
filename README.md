@@ -6,10 +6,11 @@
 
 - столкновения, отскоки, перетаскивание и инерция пузырьков;
 - общий расход за месяц и год в рублях;
-- RUB, USD, TRY и SGD с ручными курсами к рублю;
+- RUB, USD, TRY и SGD с курсами к рублю;
 - добавление, редактирование и удаление подписок;
 - необязательные дата следующего платежа и категория;
-- хранение только в `localStorage`, без сервера и аккаунта;
+- local-first хранение с опциональной синхронизацией через личный Space Key;
+- privacy-friendly anonymous analytics для закрытого тестирования;
 - офлайн-режим и установка на домашний экран.
 
 ## Запуск
@@ -19,3 +20,17 @@
 ## Публикация
 
 Проект готов к GitHub Pages и работает из подпапки репозитория благодаря относительным URL.
+
+## Sync Server
+
+Основной сервер: `server/sync_server.py`.
+
+Переменные окружения:
+
+- `DATA_DIR` — директория isolated space state-файлов, по умолчанию `/opt/subbubble/data/spaces`.
+- `ANALYTICS_FILE` — anonymous analytics, по умолчанию `/opt/subbubble/data/analytics.json`.
+- `SYNC_TOKEN` — legacy/server salt; Space Key приходит как Bearer token и хранится только как server-side hash.
+- `SPACE_HASH_SALT` — отдельная соль для hash space keys, если нужно отделить её от `SYNC_TOKEN`.
+- `ADMIN_TOKEN` — отдельный обязательный токен для `GET /stats`.
+
+`/stats` возвращает только агрегаты и требует `Authorization: Bearer $ADMIN_TOKEN`. Analytics не хранит названия подписок, суммы, валюты или исходные Space Keys.
