@@ -47,12 +47,20 @@ function mergeStates(a,b){
 }
 function setSyncStatus(status,message=''){syncMeta={...syncMeta,status,lastError:message};saveSyncMeta();renderSyncStatus()}
 function renderSyncStatus(){const statusEl=$('#sync-label'),timeEl=$('#sync-last-time');if(!statusEl||!timeEl)return;const enabled=Boolean(SYNC_CONFIG?.url),offline=!navigator.onLine;const label=!enabled?'Синхронизация выкл.':isSyncing?'Синхронизация…':syncMeta.status==='error'?'Ошибка':syncMeta.lastSuccessAt?'Синхронизировано':'Ожидает синхронизации';statusEl.textContent=label;statusEl.className=`sync-status ${isSyncing?'syncing':syncMeta.status==='error'?'error':syncMeta.lastSuccessAt?'ok':''}`;const when=syncMeta.lastSuccessAt?`последняя: ${formatWhen(syncMeta.lastSuccessAt)}`:offline?'нет сети':'ещё не было';timeEl.textContent=syncMeta.status==='error'&&syncMeta.lastError?`${when} · ${syncMeta.lastError}`:when}
+function analyticsMeta(){const ua=navigator.userAgent||'',platform=/iphone|ipad|ipod/i.test(ua)?'ios':/android/i.test(ua)?'android':/mac|win|linux/i.test(ua)?'desktop':'unknown';const standalone=window.matchMedia?.('(display-mode: standalone)')?.matches||navigator.standalone===true;return {platform,pwa:Boolean(standalone)}}
+async function trackAnalytics(event){
+  if(!SYNC_CONFIG?.url||!SYNC_CONFIG.token||!navigator.onLine)return;
+  try{
+    const url=SYNC_CONFIG.url.replace(/\/sync(?:\?.*)?$/,'/analytics');
+    await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${SYNC_CONFIG.token}`},body:JSON.stringify({event,meta:analyticsMeta()}),keepalive:true});
+  }catch(err){console.warn('SubBubble analytics skipped:',err)}
+}
 async function syncNow(){
   if(!SYNC_CONFIG?.url){renderSyncStatus();return}
   if(!navigator.onLine){setSyncStatus('error','нет сети');return}
   isSyncing=true;setSyncStatus('syncing');
   try{
-    const res=await fetch(SYNC_CONFIG.url,{method:'POST',headers:{'Content-Type':'application/json',...(SYNC_CONFIG.token?{'Authorization':`Bearer ${SYNC_CONFIG.token}`}:{})},body:JSON.stringify({state})});
+    const res=await fetch(SYNC_CONFIG.url,{method:'POST',headers:{'Content-Type':'application/json',...(SYNC_CONFIG.token?{'Authorization':`Bearer ${SYNC_CONFIG.token}`}:{})},body:JSON.stringify({state,meta:analyticsMeta()})});
     if(!res.ok)throw new Error(res.status===401||res.status===403?'ошибка ключа':`ошибка ${res.status}`);
     const payload=await res.json();if(!payload?.state)throw new Error('пустой ответ');
     const merged=mergeStates(state,payload.state);
@@ -81,8 +89,8 @@ function refresh(){totals();renderList();renderBubbles()}
 document.querySelectorAll('.nav-button').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.nav-button,.screen').forEach(x=>x.classList.remove('active'));btn.classList.add('active');$('#'+btn.dataset.screen).classList.add('active');if(btn.dataset.screen==='bubbles-screen')renderBubbles()});
 function openEditor(id){const s=state.subscriptions.find(x=>x.id===id);$('#editor-title').textContent=s?'Редактировать':'Новая подписка';$('#subscription-id').value=s?.id||'';$('#name').value=s?.name||'';$('#amount').value=s?.amount||'';$('#currency').value=s?.currency||'RUB';$('#period').value=s?.period||'month';$('#next-payment').value=s?.nextPayment||'';$('#category').value=s?.category||'';$('#delete-button').classList.toggle('hidden',!s);$('#editor-dialog').showModal()}
 $('#add-button').onclick=()=>openEditor();document.querySelectorAll('[data-close]').forEach(x=>x.onclick=()=>x.closest('dialog').close());
-$('#subscription-form').onsubmit=e=>{e.preventDefault();const id=$('#subscription-id').value||crypto.randomUUID(),item={id,name:$('#name').value.trim(),amount:Number($('#amount').value),currency:$('#currency').value,period:$('#period').value,nextPayment:$('#next-payment').value,category:$('#category').value.trim(),updatedAt:now()};const idx=state.subscriptions.findIndex(x=>x.id===id);if(idx<0)state.subscriptions.push(item);else state.subscriptions[idx]=item;delete state.tombstones[id];saveState();$('#editor-dialog').close();refresh();queueSync()};
-$('#delete-button').onclick=()=>{const id=$('#subscription-id').value;if(!id||!confirm('Удалить эту подписку?'))return;state.tombstones[id]=now();state.subscriptions=state.subscriptions.filter(x=>x.id!==id);saveState();$('#editor-dialog').close();refresh();queueSync()};
+$('#subscription-form').onsubmit=e=>{e.preventDefault();const id=$('#subscription-id').value||crypto.randomUUID(),item={id,name:$('#name').value.trim(),amount:Number($('#amount').value),currency:$('#currency').value,period:$('#period').value,nextPayment:$('#next-payment').value,category:$('#category').value.trim(),updatedAt:now()};const idx=state.subscriptions.findIndex(x=>x.id===id),created=idx<0;if(created)state.subscriptions.push(item);else state.subscriptions[idx]=item;delete state.tombstones[id];saveState();$('#editor-dialog').close();refresh();if(created)trackAnalytics('expense_added');queueSync()};
+$('#delete-button').onclick=()=>{const id=$('#subscription-id').value;if(!id||!confirm('Удалить эту подписку?'))return;state.tombstones[id]=now();state.subscriptions=state.subscriptions.filter(x=>x.id!==id);saveState();$('#editor-dialog').close();refresh();trackAnalytics('expense_deleted');queueSync()};
 $('#rate-button').onclick=()=>{$('#rates-mode').checked=state.ratesMode!=='manual';$('#usd-rate').value=state.rates.USD;$('#try-rate').value=state.rates.TRY;$('#sgd-rate').value=state.rates.SGD;$('#rates-updated').textContent=state.autoRatesUpdatedAt?`Авто обновлено: ${formatWhen(state.autoRatesUpdatedAt)}`:'Авто ещё не обновлялось';$('#rate-dialog').showModal()};
 $('#refresh-rates-button').onclick=()=>updateAutoRates({force:true});
 $('#rate-form').onsubmit=e=>{e.preventDefault();const mode=$('#rates-mode').checked?'auto':'manual';if(mode==='manual')applyRates({USD:Number($('#usd-rate').value),TRY:Number($('#try-rate').value),SGD:Number($('#sgd-rate').value)},{mode:'manual'});else if(state.autoRatesUpdatedAt)applyRates(state.autoRates,{mode:'auto',autoUpdatedAt:state.autoRatesUpdatedAt});state.ratesMode=mode;state.ratesUpdatedAt=now();saveState();$('#rate-dialog').close();refresh();queueSync();if(mode==='auto')updateAutoRates({force:true})};
