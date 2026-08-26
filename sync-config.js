@@ -1,5 +1,6 @@
 const SUBBUBBLE_SYNC_TOKEN_KEY='subbubble:sync-token';
 const SUBBUBBLE_STATE_KEY='subbubble:v2';
+const SUBBUBBLE_LEGACY_STATE_KEY='subbubble:v1';
 const DEFAULT_RATES={USD:90,TRY:2.25,SGD:70};
 const DEFAULTS=[
   {id:'server',name:'Аренда сервака',amount:2.4,currency:'USD',period:'month',nextPayment:'',category:'Работа'},
@@ -12,6 +13,25 @@ const DEFAULTS=[
 function cleanSyncToken(value){
   return String(value||'').trim().replace(/^SYNC_TOKEN\s*=\s*/i,'').trim();
 }
+
+// First-time visitors must start empty. Existing v2/v1 state is never overwritten.
+try{
+  if(!localStorage.getItem(SUBBUBBLE_STATE_KEY)&&!localStorage.getItem(SUBBUBBLE_LEGACY_STATE_KEY)){
+    const ts=Date.now();
+    localStorage.setItem(SUBBUBBLE_STATE_KEY,JSON.stringify({
+      version:2,
+      rates:{...DEFAULT_RATES},
+      ratesUpdatedAt:ts,
+      ratesMode:'auto',
+      manualRates:{...DEFAULT_RATES},
+      manualRatesUpdatedAt:ts,
+      autoRates:{...DEFAULT_RATES},
+      autoRatesUpdatedAt:0,
+      subscriptions:[],
+      tombstones:{}
+    }));
+  }
+}catch(err){console.warn('SubBubble empty-state initialization skipped:',err)}
 
 const existingToken=localStorage.getItem(SUBBUBBLE_SYNC_TOKEN_KEY);
 if(existingToken){
