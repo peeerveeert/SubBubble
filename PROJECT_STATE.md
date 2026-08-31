@@ -2,11 +2,11 @@
 
 ## Current Status
 
-SubBubble is a mobile-first vanilla PWA for visualizing recurring expenses as physical bubbles. Current production priority is preserving the restored raw visual baseline while improving the backend architecture for safe closed testing.
+SubBubble is a mobile-first vanilla PWA for visualizing recurring expenses as physical bubbles. Current production priority is preserving the restored raw visual baseline while improving closed-test feedback loops and recovery-key ergonomics.
 
 ## Current Branch
 
-`codex/anonymous-product-analytics`
+`codex/billing-periods-recovery-key`
 
 Protected recovery point mentioned by the product owner: `backup/raw-prototype-2026-08-24`. Do not modify or delete it if it appears locally/remotely.
 
@@ -18,10 +18,12 @@ Protected recovery point mentioned by the product owner: `backup/raw-prototype-2
 - Anonymous analytics records only aggregate counters and metadata: created/last seen timestamps, visit count, expense presence/count, platform, PWA flag, and daily counters.
 - Events supported: `space_created`, `app_open`, `expense_added`, `expense_deleted`.
 - Protected `GET /stats` requires separate `ADMIN_TOKEN`.
+- Billing periods now support `day / week / month / year`; monthly value is normalized from yearly cost.
+- Recovery-key UX exposes the current Space Key as `Ключ восстановления`, hidden by default, with show/hide, copy feedback, and guarded switching to an existing space.
 
 ## Next Stage
 
-Deploy the sync server update to VPS, create `ADMIN_TOKEN`, then use protected `/stats` for closed-test usage checks.
+User review of billing-period and recovery-key changes before merge/deploy.
 
 ## Open Questions
 

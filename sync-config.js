@@ -12,8 +12,27 @@ const DEFAULTS=[
 function cleanSyncToken(value){
   return String(value||'').trim().replace(/^SYNC_TOKEN\s*=\s*/i,'').trim();
 }
+function generateSpaceKey(){
+  const bytes=new Uint8Array(24);crypto.getRandomValues(bytes);
+  return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+}
+function ensureSpaceKey(){
+  const current=cleanSyncToken(localStorage.getItem(SUBBUBBLE_SYNC_TOKEN_KEY)||'');
+  if(current)return current;
+  const next=generateSpaceKey();localStorage.setItem(SUBBUBBLE_SYNC_TOKEN_KEY,next);return next;
+}
+function isValidSpaceKey(value){
+  const key=cleanSyncToken(value);
+  return key.length>0;
+}
+function currentStateHasExpenses(){
+  try{return JSON.parse(localStorage.getItem(SUBBUBBLE_STATE_KEY)||'{}').subscriptions?.length>0}catch{return false}
+}
+function emptyLocalState(){
+  localStorage.setItem(SUBBUBBLE_STATE_KEY,JSON.stringify({version:2,rates:{},ratesUpdatedAt:0,subscriptions:[],tombstones:{}}));
+}
 
-const existingToken=localStorage.getItem(SUBBUBBLE_SYNC_TOKEN_KEY);
+const existingToken=ensureSpaceKey();
 if(existingToken){
   const cleaned=cleanSyncToken(existingToken);
   if(cleaned!==existingToken)localStorage.setItem(SUBBUBBLE_SYNC_TOKEN_KEY,cleaned);
@@ -50,15 +69,20 @@ function mountSyncSettings(){
   const btn=document.createElement('button');btn.id='sync-button';btn.type='button';btn.textContent='☁';btn.setAttribute('aria-label','Настроить синхронизацию');btn.style.cssText='width:48px;height:48px;border:1px solid rgba(255,255,255,.08);border-radius:50%;background:#182136;color:#aeb9cb;font-size:21px';wrap.insertBefore(btn,add);
 
   const dialog=document.createElement('dialog');dialog.id='sync-dialog';dialog.className='sheet compact';
-  dialog.innerHTML=`<form id="sync-form" method="dialog"><div class="sheet-handle"></div><div class="sheet-title"><h3>Синхронизация</h3><button class="icon-button" type="button" data-sync-close>×</button></div><p class="sheet-copy">Один и тот же ключ подключает телефон и компьютер к общей базе. Можно вставить как сам ключ, так и всю строку SYNC_TOKEN=…</p><label>Sync Key<input id="sync-token" type="password" autocomplete="off" placeholder="Вставьте ключ с сервера"></label><p id="sync-status" class="sheet-copy" style="margin-top:0"></p><button class="primary-button" type="submit">Сохранить и синхронизировать</button></form>`;
+  dialog.innerHTML=`<form id="sync-form" method="dialog"><div class="sheet-handle"></div><div class="sheet-title"><h3>Синхронизация</h3><button class="icon-button" type="button" data-sync-close>×</button></div><p class="sheet-copy">Сохраните ключ. С его помощью можно открыть свои данные на другом устройстве. Не передавайте его другим людям — ключ даёт доступ к вашим данным.</p><label>Ключ восстановления<input id="sync-token" type="password" readonly autocomplete="off"></label><div class="form-row"><button id="toggle-sync-token" class="secondary-button" type="button">Показать</button><button id="copy-sync-token" class="secondary-button" type="button">Скопировать</button></div><label>Открыть существующее пространство<input id="existing-sync-token" type="password" autocomplete="off" placeholder="Вставьте ключ восстановления"></label><p id="sync-status" class="sheet-copy" style="margin-top:0"></p><button class="primary-button" type="submit">Открыть существующее пространство</button></form>`;
   document.body.appendChild(dialog);
-  const input=dialog.querySelector('#sync-token'),status=dialog.querySelector('#sync-status');
+  const input=dialog.querySelector('#sync-token'),existingInput=dialog.querySelector('#existing-sync-token'),status=dialog.querySelector('#sync-status'),toggle=dialog.querySelector('#toggle-sync-token'),copy=dialog.querySelector('#copy-sync-token');
   const setStatus=msg=>{status.textContent=msg};
-  btn.addEventListener('click',()=>{input.value=localStorage.getItem(SUBBUBBLE_SYNC_TOKEN_KEY)||'';setStatus(input.value?'Ключ сохранён на этом устройстве.':'Синхронизация ещё не подключена.');dialog.showModal()});
+  btn.addEventListener('click',()=>{input.type='password';toggle.textContent='Показать';input.value=ensureSpaceKey();existingInput.value='';setStatus('Ключ сохранён на этом устройстве.');dialog.showModal()});
+  toggle.addEventListener('click',()=>{const shown=input.type==='text';input.type=shown?'password':'text';toggle.textContent=shown?'Показать':'Скрыть'});
+  copy.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(ensureSpaceKey());setStatus('Скопировано')}catch{setStatus('Не удалось скопировать автоматически')}});
   dialog.querySelector('[data-sync-close]').addEventListener('click',()=>dialog.close());
   dialog.querySelector('#sync-form').addEventListener('submit',e=>{
-    e.preventDefault();const token=cleanSyncToken(input.value);if(!token){setStatus('Введите Sync Key.');return}
-    neutralizeUntouchedDefaults();localStorage.setItem(SUBBUBBLE_SYNC_TOKEN_KEY,token);setStatus('Ключ сохранён. Перезапускаю синхронизацию…');
+    e.preventDefault();const token=cleanSyncToken(existingInput.value);if(!isValidSpaceKey(token)){setStatus('Введите корректный ключ восстановления.');return}
+    const current=ensureSpaceKey();if(token===current){setStatus('Этот ключ уже используется.');return}
+    const warning=currentStateHasExpenses()?' В текущем пространстве есть расходы: сначала сохраните текущий ключ восстановления.':'';
+    if(!confirm(`Открыть другое пространство? Текущий ключ на этом устройстве будет заменён.${warning}`))return;
+    localStorage.setItem(SUBBUBBLE_SYNC_TOKEN_KEY,token);emptyLocalState();setStatus('Ключ сохранён. Открываю пространство…');
     setTimeout(()=>location.reload(),350);
   });
 }
